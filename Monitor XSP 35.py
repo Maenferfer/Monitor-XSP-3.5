@@ -11,7 +11,7 @@ import pytz
 FINNHUB_API_KEY = 'd6d2nn1r01qgk7mkblh0d6d2nn1r01qgk7mkblhg'
 ZONA_HORARIA = pytz.timezone('Europe/Madrid')
 
-st.set_page_config(page_title="XSP 0DTE Institutional v4.3.1", layout="wide")
+st.set_page_config(page_title="XSP 0DTE Institutional v4.4", layout="wide")
 
 # --- FUNCIONES DE CÁLCULO ---
 def calculate_rsi(series, period=14):
@@ -47,7 +47,7 @@ def obtener_datos():
         "XSP": "^XSP", "VIX": "^VIX", "VIX9D": "^VIX9D", 
         "VVIX": "^VVIX", "VIX1D": "^VIX1D", "NDX": "^NDX", 
         "SPY": "SPY", "SKEW": "^SKEW", "TNX": "^TNX",
-        "ES_FUT": "ES=F", "AAPL": "AAPL", "MSFT": "MSFT"
+        "ES_FUT": "ES=F", "AAPL": "AAPL", "MSFT": "MSFT", "NVDA": "NVDA"
     }
     vals = {}
     ahora_madrid = datetime.now(ZONA_HORARIA).time()
@@ -76,18 +76,25 @@ def obtener_datos():
         except:
             vals[k] = {"actual": 0.0, "apertura": 0.0, "min": 0.0, "max": 0.0, "vol_actual": 0.0, "vol_avg": 0.0, "rsi": 50.0, "prev_close": 0.0, "hist": pd.Series()}
 
-    # SESGO HÍBRIDO CON CONFLUENCIA MAG7
-    mag7_bull = (vals["AAPL"]["actual"] > vals["AAPL"]["apertura"]) or (vals["MSFT"]["actual"] > vals["MSFT"]["apertura"])
+    # LÓGICA DE CONFLUENCIA BIG TECH (2 DE 3)
+    votos_bull = 0
+    for t in ["AAPL", "MSFT", "NVDA"]:
+        if vals.get(t) and vals[t]["actual"] > vals[t]["apertura"]:
+            votos_bull += 1
     
+    confluencia_ok = (votos_bull >= 2)
+    
+    # SESGO HÍBRIDO
     if not mercado_abierto and vals.get("ES_FUT") and vals["ES_FUT"]["actual"] > 0:
-        vals["XSP"]["hibrido_bias"] = (vals["ES_FUT"]["actual"] > vals["ES_FUT"]["apertura"]) and mag7_bull
+        vals["XSP"]["hibrido_bias"] = (vals["ES_FUT"]["actual"] > vals["ES_FUT"]["apertura"]) and confluencia_ok
     else:
-        vals["XSP"]["hibrido_bias"] = (vals["XSP"]["actual"] > vals["XSP"]["apertura"]) and mag7_bull
+        vals["XSP"]["hibrido_bias"] = (vals["XSP"]["actual"] > vals["XSP"]["apertura"]) and confluencia_ok
         
+    vals["XSP"]["votos_tech"] = votos_bull
     return vals
 
 # --- INTERFAZ ---
-st.title("🏛️ XSP 0DTE Institutional Terminal v4.3.1")
+st.title("🏛️ XSP 0DTE Institutional Terminal v4.4")
 
 with st.sidebar:
     st.header("Configuración")
@@ -121,7 +128,7 @@ if btn_analizar:
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("XSP Precio", f"{xsp['actual']:.2f}")
-        st.write(f"**AAPL/MSFT:** {'🟢 Bullish' if (d['AAPL']['actual']>d['AAPL']['apertura'] or d['MSFT']['actual']>d['MSFT']['apertura']) else '🔴 Bearish'}")
+        st.write(f"**Tech 2/3:** {'🟢 OK' if xsp['votos_tech']>=2 else '🔴 NO'}")
     with c2:
         st.metric("Volumen SPY", f"{vol_ratio:.2f}x")
         st.write(f"**RSI:** {xsp['rsi']:.1f}")
@@ -134,9 +141,11 @@ if btn_analizar:
 
     st.divider()
 
+    # --- TABLA Y ESTRATEGIA ---
     if noticias["bloqueo"] or (vix_invertido and skew > 148):
         st.error("### 🛑 BLOQUEO: Riesgo Crítico en el mercado.")
     else:
+        # Régimen y Bias Híbrido
         std_total, std_rec = xsp["hist"].std(), xsp["hist"].tail(5).std()
         regime = "COMPRESIÓN 📉" if std_rec <= std_total else "EXPANSIÓN 📈"
         rango_pct = abs((xsp["actual"] - xsp["apertura"]) / xsp["apertura"] * 100) if xsp["apertura"] != 0 else 0.0
@@ -166,7 +175,7 @@ if btn_analizar:
         
         st.table(pd.DataFrame(niveles))
         
-        # RECOMENDACIÓN FINAL Y GESTIÓN DE RIESGO
+        # RECOMENDACIÓN FINAL
         st.divider()
         pop_rec = (norm.cdf(agresividad) - norm.cdf(-agresividad)) if cond_ic else norm.cdf(agresividad)
         
@@ -176,16 +185,15 @@ if btn_analizar:
                 st.success(f"### 🎯 ESTRATEGIA: IRON CONDOR ({agresividad}σ)")
             else:
                 st.info(f"### 🎯 ESTRATEGIA: {'BULL PUT' if bias else 'BEAR CALL'} ({agresividad}σ)")
-            st.write(f"**Probabilidad de Éxito (POP):** {pop_rec*100:.1f}%")
-            st.write(f"**Lotes Sugeridos:** {lotes} contratos")
+            st.write(f"**Probabilidad (POP):** {pop_rec*100:.1f}% | **Lotes:** {lotes}")
 
         with m2:
-            st.warning("### 🛡️ GESTIÓN DE RIESGO (REGLA 50/300)")
-            st.write("- **Take Profit:** Cerrar al capturar el 50% de la prima.")
-            st.write("- **Stop Loss:** Cerrar si el precio toca el strike vendido.")
-            st.write(f"- **Invalidez Técnica:** RSI > 75 o RSI < 25.")
-
-        st.write(f"**ℹ️ Estado del Motor:** {'Híbrido + Mag7 Confluence' if (time(9,0) <= ahora < time(15,30)) else 'Datos RTH Live ✅'}")
+            st.warning("### 🛡️ GESTIÓN DE RIESGO")
+            st.write("- **TP:** 50% de la prima.")
+            st.write("- **SL:** Tocar strike vendido.")
+        
+        st.write(f"**Motor:** {'Híbrido (Futuros + NVDA)' if (time(9,0) <= ahora < time(15,30)) else 'RTH Live ✅'}")
 
 else:
     st.info("Introduce capital y analiza para ver niveles de IBKR.")
+        
