@@ -98,7 +98,7 @@ st.title("🏛️ XSP 0DTE Institutional Terminal v4.4")
 
 with st.sidebar:
     st.header("Configuración")
-    capital = st.number_input("Capital Cuenta (€)", value=10000.0, step=500.0)
+    capital = st.number_input("Capital Cuenta (€)", value=25000.0, step=500.0)
     agresividad = st.select_slider("Multiplicador Sigma", options=[1.1, 1.3, 1.5], value=1.3)
     btn_analizar = st.button("🚀 ANALIZAR MERCADO")
 
